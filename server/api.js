@@ -20,55 +20,15 @@ exports.checkToken = async (token, accountType) => {
 };
 
 // fetch room list for session owner
-exports.userRooms = () => {
-  return [
-    {
-      id: 1,
-      title: 'room#1',
-      lastMessage: 'Thank you. See you soon.',
-      participants: [
-        {
-          id: 5,
-          username: 'individual_bengisu'
-        },
-        {
-          id: 1,
-          username: 'individual_cagri'
-        }
-      ]
-    },
-    {
-      id: 2,
-      title: 'room#2',
-      lastMessage: 'Have a nice day',
-      participants: [
-        {
-          id: 5,
-          username: 'individual_bengisu'
-        },
-        {
-          id: 1,
-          username: 'individual_cagri'
-        }
-      ]
-    }
-  ]
-}
-
-// fetch chat history
-exports.roomHistory = () => {
-  return [
-    {
-      sender: 5,
-      room: 'room#1',
-      content: 'How can I help you?',
-    },
-    {
-      sender: 1,
-      room: 'room#1',
-      content: 'You cant',
-    }
-  ]
+exports.userRooms = async (token) => {
+  let rooms = []
+  http.defaults.headers.common['Authorization'] = `Bearer ${token}`
+  await http.get('/get/messages/all').then((res) => {
+    rooms = res.data.payload.messages
+  }).catch((err) => {
+    console.log(err.response.data)
+  })
+  return rooms
 }
 
 // Create room
@@ -77,8 +37,18 @@ exports.createRoom = () => {
 }
 
 // Save message to api
-exports.saveMessage = ({room, content, sender}) => {
-  console.log({room, content, sender})
+exports.saveMessage = async ({conversationId, content, token}) => {
+  let message = null
+  http.defaults.headers.common['Authorization'] = `Bearer ${token}`
+  await http.post('/message/new', {
+    conversation_id: conversationId,
+    message: content
+  }).then((res) => {
+    message = res.data.payload.message
+  }).catch((err) => {
+    console.log(err.response.data)
+  })
+  return message
 }
 
 // exports.userData = async (username, token, accountType) => {

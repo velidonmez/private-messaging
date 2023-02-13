@@ -67,9 +67,6 @@ export default {
       this.activeRoom = id
       socket.emit("join-room", id);
       socket.emit("room-history", id);
-      socket.on('receive-message', (data) => {
-        console.log(data)
-      })
     },
     sendMessage() {
       socket.emit("send-message", {
@@ -91,12 +88,10 @@ export default {
       })
 
       socket.on('room-history', (data) => {
-        console.log(data)
         this.roomHistory = data
       })
 
       socket.on('receive-message', (data) => {
-        console.log('message received')
         this.roomHistory.push(data)
       })
 

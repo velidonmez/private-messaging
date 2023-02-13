@@ -33,10 +33,12 @@ io.use(async (socket, next) => {
         socket.sessionID = sessionID;
         socket.userID = session.userID;
         socket.username = session.username;
+        socket.token = user.token;
       } else {
         socket.sessionID = user.id;
         socket.userID = user.id;
         socket.username = user.username;
+        socket.token = user.token;
       }
       return next();
     } else {
@@ -52,20 +54,19 @@ io.on("connection", async (socket) => {
   sessionStore.saveSession(socket.sessionID, {
     userID: socket.userID,
     username: socket.username,
+    token: socket.token,
     connected: true,
   });
 
   // emit session details
   socket.emit("session", {
     sessionID: socket.sessionID,
-    userID: socket.userID
+    userID: socket.userID,
+    token: socket.token
   });
 
-  // join the "userID" room
-  // socket.join(socket.userID);
-
   // fetch existing messaging rooms
-  const userRooms = api.userRooms()
+  const userRooms = await api.userRooms(socket.token)
   socket.emit("rooms", userRooms);
 
   // join existing room
@@ -74,15 +75,16 @@ io.on("connection", async (socket) => {
     console.log(`socket ${socket.id} has joined room ${room}`);
   });
 
-  socket.on("room-history", (room) => {
-    const history = api.roomHistory(room)
-    socket.emit("room-history", history)
-  });
-
   // send message to a room
-  socket.on('send-message', ({room, content, sender}) => {
-    api.saveMessage({room, content, sender})
-    io.in(room).emit("receive-message", {content, sender});
+  socket.on('send-message', async ({room, content}) => {
+    const message = await api.saveMessage({conversationId: room.id, content, token: socket.token})
+    io.in(room.room_id).emit("receive-message", message);
+    // todo: update rooms if new message arrives
+    // socket.broadcast.emit("update-rooms", {
+    //   updatedConversation: room.room_id,
+    //   updatedRoom: room.id,
+    //   receivers: room.group_members
+    // });
   })
 
   // fetch existing users
@@ -120,17 +122,6 @@ io.on("connection", async (socket) => {
     messages: [],
   });
 
-  // forward the private message to the right recipient (and to other tabs of the sender)
-  socket.on("private message", ({content, to}) => {
-    const message = {
-      content,
-      from: socket.userID,
-      to,
-    };
-    socket.to(to).to(socket.userID).emit("private message", message);
-    messageStore.saveMessage(message);
-  });
-
   // notify users upon disconnection
   socket.on("disconnect", async () => {
     const matchingSockets = await io.in(socket.userID).allSockets();
@@ -142,6 +133,7 @@ io.on("connection", async (socket) => {
       sessionStore.saveSession(socket.sessionID, {
         userID: socket.userID,
         username: socket.username,
+        token: socket.token,
         connected: false,
       });
     }
