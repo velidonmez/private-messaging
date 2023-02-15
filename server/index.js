@@ -19,9 +19,6 @@ const {setupWorker} = require("@socket.io/sticky");
 const {RedisSessionStore} = require("./sessionStore");
 const sessionStore = new RedisSessionStore(redisClient);
 
-const {RedisMessageStore} = require("./messageStore");
-const messageStore = new RedisMessageStore(redisClient);
-
 io.use(async (socket, next) => {
   const user = socket.handshake.auth.user;
   if (user) {
@@ -30,11 +27,15 @@ io.use(async (socket, next) => {
     if (sessionID && status) {
       const session = await sessionStore.findSession(sessionID);
       if (session) {
+        const socketList = JSON.parse(session.socketList)
+        socketList.push(socket.id)
+        socket.socketList = socketList
         socket.sessionID = sessionID;
         socket.userID = session.userID;
         socket.username = session.username;
         socket.token = user.token;
       } else {
+        socket.socketList = [socket.id]
         socket.sessionID = user.id;
         socket.userID = user.id;
         socket.username = user.username;
@@ -50,11 +51,14 @@ io.use(async (socket, next) => {
 });
 
 io.on("connection", async (socket) => {
+  const ids = await io.allSockets();
+
   // persist session
   sessionStore.saveSession(socket.sessionID, {
     userID: socket.userID,
     username: socket.username,
     token: socket.token,
+    socketList: JSON.stringify(socket.socketList),
     connected: true,
   });
 
@@ -62,7 +66,8 @@ io.on("connection", async (socket) => {
   socket.emit("session", {
     sessionID: socket.sessionID,
     userID: socket.userID,
-    token: socket.token
+    token: socket.token,
+    socketList: socket.socketList
   });
 
   // fetch existing messaging rooms
@@ -79,6 +84,7 @@ io.on("connection", async (socket) => {
   socket.on('send-message', async ({room, content}) => {
     const message = await api.saveMessage({conversationId: room.id, content, token: socket.token})
     io.in(room.room_id).emit("receive-message", message);
+    io.to(Array.from(ids)).emit("notification-received", 'test test');
     // todo: update rooms if new message arrives
     // socket.broadcast.emit("update-rooms", {
     //   updatedConversation: room.room_id,
@@ -87,56 +93,33 @@ io.on("connection", async (socket) => {
     // });
   })
 
-  // fetch existing users
-  const users = [];
-  const [messages, sessions] = await Promise.all([
-    messageStore.findMessagesForUser(socket.userID),
-    sessionStore.findAllSessions(),
-  ]);
-  const messagesPerUser = new Map();
-  messages.forEach((message) => {
-    const {from, to} = message;
-    const otherUser = socket.userID === from ? to : from;
-    if (messagesPerUser.has(otherUser)) {
-      messagesPerUser.get(otherUser).push(message);
-    } else {
-      messagesPerUser.set(otherUser, [message]);
-    }
-  });
-
-  sessions.forEach((session) => {
-    users.push({
-      userID: session.userID,
-      username: session.username,
-      connected: session.connected,
-      messages: messagesPerUser.get(session.userID) || [],
-    });
-  });
-  socket.emit("users", users);
-
   // notify existing users
   socket.broadcast.emit("user connected", {
     userID: socket.userID,
     username: socket.username,
     connected: true,
-    messages: [],
+    socketList: socket.socketList,
   });
 
   // notify users upon disconnection
   socket.on("disconnect", async () => {
     const matchingSockets = await io.in(socket.userID).allSockets();
     const isDisconnected = matchingSockets.size === 0;
-    if (isDisconnected) {
-      // notify other users
-      socket.broadcast.emit("user disconnected", socket.userID);
-      // update the connection status of the session
-      sessionStore.saveSession(socket.sessionID, {
-        userID: socket.userID,
-        username: socket.username,
-        token: socket.token,
-        connected: false,
-      });
+    const socketList = [...socket.socketList]
+    const socketIdx = socket.socketList.findIndex(el => el === socket.id)
+
+    if (socketIdx !== -1){
+      socketList.splice(socketIdx, 1)
     }
+    // notify other users
+    socket.broadcast.emit("user closed a socket", socket.userID);
+    sessionStore.saveSession(socket.sessionID, {
+      userID: socket.userID,
+      socketList: JSON.stringify(socketList),
+      username: socket.username,
+      token: socket.token,
+      connected: !isDisconnected,
+    });
   });
 });
 
